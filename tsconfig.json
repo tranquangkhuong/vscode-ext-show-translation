@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "target": "es2022",
+    "lib": ["es2022", "DOM"],
+    "sourceMap": true,
+    "rootDir": "src",
+    "strict": true /* enable all strict type-checking options */,
+    /* Additional Checks */
+    "noImplicitReturns": true /* Report error when not all code paths in function return a value. */,
+    "noFallthroughCasesInSwitch": true /* Report errors for fallthrough cases in switch statement. */,
+    "noUnusedParameters": true /* Report errors on unused parameters. */,
+    "esModuleInterop": true /* Enables emit interoperability between CommonJS and ES Modules via creation of namespace objects for all imports. */,
+    "forceConsistentCasingInFileNames": true /* Disallow inconsistently-cased references to the same file. */,
+    "allowSyntheticDefaultImports": true /* Allow default imports from modules with no default export. This does not affect code emit, just type-checking. */,
+    "resolveJsonModule": true /* Allows importing .json files. */,
+    "experimentalDecorators": true /* Enables experimental support for ES7 decorators. */,
+    "emitDecoratorMetadata": true /* Enables experimental support for emitting type metadata for decorators. */
+  },
+  "exclude": ["node_modules", ".vscode-test"]
+}
