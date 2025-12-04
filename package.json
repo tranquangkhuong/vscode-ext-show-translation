@@ -4,8 +4,6 @@
   "description": "Show translation in editor from json data",
   "keywords": [
     "translate",
-    "i18n",
-    "internationalization",
     "javascript",
     "typescript",
     "html",
@@ -28,7 +26,7 @@
     "vscode": ">=1.90.0"
   },
   "categories": [
-    "Extension",
+    "Extension Packs",
     "Snippets",
     "Other"
   ],
