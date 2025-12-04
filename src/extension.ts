@@ -294,14 +294,23 @@ function registerDefinition(context: vscode.ExtensionContext): void {
             const fullPath = path.resolve(root, filePath);
             try {
               const text = fs.readFileSync(fullPath, "utf8");
-              const lineIndex = text
-                .split("\n")
-                .findIndex((line) => line.includes(`"${keyParts.at(-1)}"`));
-
-              if (lineIndex >= 0) {
-                results.push(
-                  new vscode.Location(vscode.Uri.file(fullPath), new vscode.Position(lineIndex, 0))
+              const pos = findPositionByKeyPath(text, keyParts);
+              if (pos) {
+                results.push(new vscode.Location(vscode.Uri.file(fullPath), pos));
+              } else {
+                // Fallback: tìm theo tên key cuối cùng nếu không xác định được đường dẫn đầy đủ
+                const lines = text.split(/\r?\n/);
+                const lineIndex = lines.findIndex((line) =>
+                  line.includes(`"${keyParts.at(-1) ?? ""}"`)
                 );
+                if (lineIndex >= 0) {
+                  results.push(
+                    new vscode.Location(
+                      vscode.Uri.file(fullPath),
+                      new vscode.Position(lineIndex, 0)
+                    )
+                  );
+                }
               }
             } catch (e) {
               // Silently skip if file cannot be read
@@ -508,6 +517,41 @@ function getBestKeyFromFullText(
   }
 
   return null;
+}
+
+/**
+ * Tìm vị trí tương đối trong file JSON dựa theo từng phần key
+ * Ví dụ keyParts = ["CONTROLL", "LABEL", "amount_after_vat"]
+ * sẽ ưu tiên block:
+ *   "CONTROLL": {
+ *     "LABEL": {
+ *       "amount_after_vat": ...
+ *     }
+ *   }
+ * thay vì block khác cũng có "amount_after_vat".
+ */
+function findPositionByKeyPath(text: string, keyParts: string[]): vscode.Position | null {
+  const lines = text.split(/\r?\n/);
+  let currentLine = 0;
+
+  for (const part of keyParts) {
+    const target = `"${part}"`;
+    let found = -1;
+    for (let i = currentLine; i < lines.length; i++) {
+      if (lines[i].includes(target)) {
+        found = i;
+        break;
+      }
+    }
+    if (found === -1) {
+      return null;
+    }
+    currentLine = found;
+  }
+
+  const lastPart = keyParts[keyParts.length - 1] ?? "";
+  const col = lines[currentLine].indexOf(`"${lastPart}"`);
+  return new vscode.Position(currentLine, col >= 0 ? col : 0);
 }
 
 /**
