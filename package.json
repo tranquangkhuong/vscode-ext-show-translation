@@ -6,6 +6,7 @@
     "translate",
     "i18n",
     "internationalization",
+    "javascript",
     "typescript",
     "html",
     "vscode-extension"
@@ -22,19 +23,17 @@
   },
   "icon": "images/icon.png",
   "license": "MIT",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "engines": {
     "vscode": ">=1.90.0"
   },
   "categories": [
-    "Other",
+    "Extension",
     "Snippets",
-    "Extension Packs",
-    "Language Packs"
+    "Other"
   ],
   "activationEvents": [
-    "onLanguage:typescript",
-    "onLanguage:html"
+    "workspaceContains:.vscode/show-translation.json"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -46,6 +45,10 @@
     ],
     "hoverProvider": [
       {
+        "language": "javascript",
+        "provider": true
+      },
+      {
         "language": "typescript",
         "provider": true
       },
@@ -55,6 +58,13 @@
       }
     ],
     "completionItemProvider": [
+      {
+        "language": "javascript",
+        "triggerCharacters": [
+          "."
+        ],
+        "provideCompletionItems": true
+      },
       {
         "language": "typescript",
         "triggerCharacters": [
@@ -71,6 +81,9 @@
       }
     ],
     "definitionProvider": [
+      {
+        "language": "javascript"
+      },
       {
         "language": "typescript"
       },
@@ -105,6 +118,7 @@
     "npm-run-all": "^4.1.5",
     "typescript": "^5.8.3",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^2.28.0"
   }
 }

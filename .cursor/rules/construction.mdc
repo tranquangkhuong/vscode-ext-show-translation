@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+This is VSCode extension project.
+The extension that allows you to show translation in the editor.
+How this extension works:
+ - Get config from .vscode/show-translation.json file.
+ - Get translation data from JSON files.
+ - Show translation in the editor when any text matching matchStrings in config is hovered.
+ - Suggest translation when typing "." (dot) after matchStrings in config.
+ - Ctrl+Click to open the JSON file and move to the corresponding key location.
+ - Support any languages in vscode supports. Declare in config file. Default is javascript, typescript, html.
+ - Working independent, not effect other extensions. Even if other extensions fail.

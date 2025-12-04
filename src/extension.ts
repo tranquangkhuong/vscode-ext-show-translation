@@ -5,21 +5,22 @@ import path from "path";
 import vscode from "vscode";
 
 const packageId: string = "vscode-ext-show-translation";
-const cfgFileName: string = "config.json";
+const cfgFileName: string = "show-translation.json";
 const cfgRootDir: string = ".vscode";
-const defaultVariableNames: string[] = ["this._translate", "_translate"];
-const defaultLanguages: string[] = ["typescript", "html"];
+const defaultMatchStrings: string[] = ["this._translate", "_translate", "translate", "trans"];
+const defaultLanguages: string[] = ["javascript", "typescript", "html"];
 const jsonCache: Record<string, any> = {};
 const jsonWatchers: Record<string, vscode.FileSystemWatcher> = {};
+let jsonPathLabels: Record<string, string> = {};
 
 interface ConfigInterface {
-  variableNames: string[];
+  matchStrings: string[];
   workInFiles: string[];
   paths: string[];
 }
 
 let currentConfig: ConfigInterface = {
-  variableNames: defaultVariableNames,
+  matchStrings: defaultMatchStrings,
   workInFiles: defaultLanguages,
   paths: [],
 };
@@ -42,7 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 // This method is called when your extension is deactivated
-export function deactivate(): void { }
+export function deactivate(): void {}
 
 /**
  * Watch the config file for changes
@@ -52,7 +53,7 @@ function watchConfigFile(context: vscode.ExtensionContext): void {
   const root = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
   if (!root) return;
 
-  const configDir = path.join(root, cfgRootDir, packageId);
+  const configDir = path.join(root, cfgRootDir);
   const configPath = path.join(configDir, cfgFileName);
 
   // Ensure the config directory exists
@@ -63,7 +64,7 @@ function watchConfigFile(context: vscode.ExtensionContext): void {
   // If config file does not exist, create a default one
   if (!fs.existsSync(configPath)) {
     const defaultConfig: ConfigInterface = {
-      variableNames: defaultVariableNames,
+      matchStrings: defaultMatchStrings,
       workInFiles: defaultLanguages,
       paths: ["assets/i18n/vi.json", "assets/i18n/en.json"],
     };
@@ -80,16 +81,25 @@ function watchConfigFile(context: vscode.ExtensionContext): void {
   }
 
   const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(root, `${cfgRootDir}/${packageId}/${cfgFileName}`)
+    new vscode.RelativePattern(root, `${cfgRootDir}/${cfgFileName}`)
   );
 
   const updateConfig = () => {
     try {
       const content = fs.readFileSync(configPath, "utf-8");
-      currentConfig = JSON.parse(content);
+      const parsed = JSON.parse(content) as ConfigInterface;
+      // Gộp với default để tránh thiếu field
+      currentConfig = {
+        matchStrings: parsed.matchStrings ?? defaultMatchStrings,
+        workInFiles: parsed.workInFiles ?? defaultLanguages,
+        paths: parsed.paths ?? [],
+      };
       handleJsonCacheAndWatcher(currentConfig.paths, context);
     } catch (e: any) {
-      vscode.window.showWarningMessage(`[${packageId}] Configuration read error: ${e.message}`);
+      // Log error to console instead of showing warning to avoid blocking
+      console.error(`[${packageId}] Configuration read error:`, e.message);
+      // Không thay đổi config hiện tại nếu file bị lỗi,
+      // để extension vẫn hoạt động với cấu hình cũ.
     }
   };
 
@@ -97,10 +107,11 @@ function watchConfigFile(context: vscode.ExtensionContext): void {
   watcher.onDidCreate(updateConfig);
   watcher.onDidDelete(() => {
     currentConfig = {
-      variableNames: defaultVariableNames,
+      matchStrings: defaultMatchStrings,
       workInFiles: defaultLanguages,
       paths: [],
     };
+    handleJsonCacheAndWatcher([], context);
   });
 
   updateConfig(); // First load
@@ -127,36 +138,47 @@ function registerCommand(context: vscode.ExtensionContext): void {
 function registerHover(context: vscode.ExtensionContext): void {
   const provider: vscode.HoverProvider = {
     provideHover(document, position, _token) {
-      if (!currentConfig.workInFiles.includes(document.languageId)) return;
+      try {
+        if (!currentConfig.workInFiles.includes(document.languageId)) return;
 
-      const regex = buildRegexFromVariables(currentConfig.variableNames);
-      const range = document.getWordRangeAtPosition(position, regex);
-      if (!range) return;
+        const fullText = getFullTextAtPosition(document, position);
+        if (!fullText) return;
+        const key = extractKeyFromFullText(fullText);
+        if (key === null) return;
+        const allJson = getAllCachedJson();
+        let markdownText = "";
 
-      const fullText = document.getText(range);
-      const key = currentConfig.variableNames.reduce(
-        (acc, v) => acc.replace(new RegExp(`^${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.?`), ""),
-        fullText
-      );
-      const allJson = getAllCachedJson();
-      let markdownText = "";
-
-      for (const [lang, jsonData] of Object.entries(allJson)) {
-        const value = getValueByKey(jsonData, key);
-        if (value !== undefined) {
-          markdownText += `**${lang}**: ${value}\n\n---\n\n`;
+        for (const [lang, jsonData] of Object.entries(allJson)) {
+          try {
+            const value = getValueByKey(jsonData, key);
+            if (value !== undefined) {
+              markdownText += `**${lang}**: ${value}\n\n---\n\n`;
+            }
+          } catch (e) {
+            // Silently skip errors for individual JSON files
+            console.error(`[${packageId}] Error processing ${lang} JSON:`, e);
+          }
         }
-      }
 
-      if (markdownText.trim()) {
-        return new vscode.Hover(new vscode.MarkdownString(markdownText));
+        if (markdownText.trim()) {
+          return new vscode.Hover(new vscode.MarkdownString(markdownText));
+        }
+      } catch (e) {
+        // Silently handle errors to avoid blocking other extensions
+        console.error(`[${packageId}] Hover provider error:`, e);
       }
 
       return;
     },
   };
 
-  const disposable = vscode.languages.registerHoverProvider(currentConfig.workInFiles, provider);
+  // Đăng ký cho mọi file, sau đó tự lọc theo currentConfig.workInFiles
+  const selector: vscode.DocumentSelector = [
+    { scheme: "file" },
+    { scheme: "untitled" },
+    { scheme: "vscode-notebook-cell" },
+  ];
+  const disposable = vscode.languages.registerHoverProvider(selector, provider);
   context.subscriptions.push(disposable);
 }
 
@@ -167,56 +189,79 @@ function registerHover(context: vscode.ExtensionContext): void {
 function registerCompletionItem(context: vscode.ExtensionContext): void {
   const provider: vscode.CompletionItemProvider = {
     provideCompletionItems(document, position, _token, _context) {
-      const regex = buildRegexFromVariables(currentConfig.variableNames);
-      const lineText = document.lineAt(position).text;
-      const match = regex.exec(lineText.substring(0, position.character));
-      if (!match) return;
+      try {
+        if (!currentConfig.workInFiles.includes(document.languageId)) return;
 
-      const fullMatch = match[0];
-      const keyPrefix = currentConfig.variableNames.reduce(
-        (acc, v) => acc.replace(new RegExp(`^${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.?`), ""),
-        fullMatch
-      );
-      const allJson = getAllCachedJson();
-      const keySet = new Set<string>();
-      const suggestionMap = new Map<string, vscode.CompletionItem>(); // dùng để loại trùng
-      // If keyPrefix is empty string (`this._translate.` or `_translate.`)
-      const fullKeyIsRoot = keyPrefix === "";
+        // VSCode trigger completion tại dấu '.', nên lùi lại 1 ký tự để nằm trong từ cần phân tích
+        const posForWord =
+          position.character > 0
+            ? new vscode.Position(position.line, position.character - 1)
+            : position;
+        const fullMatch = getFullTextAtPosition(document, posForWord);
+        if (!fullMatch) return;
+        const keyPrefix = extractKeyFromFullText(fullMatch);
+        if (keyPrefix === null) return;
+        const allJson = getAllCachedJson();
+        const keySet = new Set<string>();
+        const suggestionMap = new Map<string, vscode.CompletionItem>(); // dùng để loại trùng
+        // If keyPrefix is empty string (`this._translate.` or `_translate.`)
+        const fullKeyIsRoot = keyPrefix === "";
 
-      for (const [lang, jsonData] of Object.entries(allJson)) {
-        const node = fullKeyIsRoot ? jsonData : getValueByKey(jsonData, keyPrefix);
+        for (const [lang, jsonData] of Object.entries(allJson)) {
+          try {
+            const node = fullKeyIsRoot ? jsonData : getValueByKey(jsonData, keyPrefix);
 
-        if (typeof node === "object" && node !== null) {
-          for (const childKey of Object.keys(node)) {
-            if (!keySet.has(childKey)) {
-              keySet.add(childKey);
-              const item = new vscode.CompletionItem(childKey, vscode.CompletionItemKind.Property);
-              item.label = childKey;
-              item.detail = childKey;
-              suggestionMap.set(childKey, item);
+            if (typeof node === "object" && node !== null) {
+              for (const childKey of Object.keys(node)) {
+                if (!keySet.has(childKey)) {
+                  keySet.add(childKey);
+                  const item = new vscode.CompletionItem(
+                    childKey,
+                    vscode.CompletionItemKind.Property
+                  );
+                  item.label = childKey;
+                  item.detail = childKey;
+                  suggestionMap.set(childKey, item);
+                }
+
+                // Get display value (if any)
+                // Always update documentation (merge all languages)
+                const fullKey = fullKeyIsRoot ? childKey : `${keyPrefix}.${childKey}`;
+                const value = getValueByKey(jsonData, fullKey);
+                if (value && typeof value === "string") {
+                  const item = suggestionMap.get(childKey)!;
+                  const prevDoc =
+                    item.documentation instanceof vscode.MarkdownString
+                      ? item.documentation.value
+                      : "";
+                  const md = new vscode.MarkdownString(prevDoc + `- **${lang}**: ${value}\n`);
+                  item.documentation = md;
+                }
+              }
             }
-
-            // Get display value (if any)
-            // Always update documentation (merge all languages)
-            const fullKey = fullKeyIsRoot ? childKey : `${keyPrefix}.${childKey}`;
-            const value = getValueByKey(jsonData, fullKey);
-            if (value && typeof value === "string") {
-              const item = suggestionMap.get(childKey)!;
-              const prevDoc =
-                item.documentation instanceof vscode.MarkdownString ? item.documentation.value : "";
-              const md = new vscode.MarkdownString(prevDoc + `- **${lang}**: ${value}\n`);
-              item.documentation = md;
-            }
+          } catch (e) {
+            // Silently skip errors for individual JSON files
+            console.error(`[${packageId}] Error processing ${lang} JSON in completion:`, e);
           }
         }
-      }
 
-      return Array.from(suggestionMap.values());
+        return Array.from(suggestionMap.values());
+      } catch (e) {
+        // Silently handle errors to avoid blocking other extensions
+        console.error(`[${packageId}] Completion provider error:`, e);
+        return [];
+      }
     },
   };
 
+  // Đăng ký cho mọi file, sau đó tự lọc theo currentConfig.workInFiles
+  const selector: vscode.DocumentSelector = [
+    { scheme: "file" },
+    { scheme: "untitled" },
+    { scheme: "vscode-notebook-cell" },
+  ];
   const disposable = vscode.languages.registerCompletionItemProvider(
-    currentConfig.workInFiles,
+    selector,
     provider,
     "."
   ); // Trigger when typing dot
@@ -230,37 +275,42 @@ function registerCompletionItem(context: vscode.ExtensionContext): void {
 function registerDefinition(context: vscode.ExtensionContext): void {
   const provider: vscode.DefinitionProvider = {
     provideDefinition(document, position, _token) {
-      const regex = buildRegexFromVariables(currentConfig.variableNames);
-      const range = document.getWordRangeAtPosition(position, regex);
-      if (!range) return;
-
-      const fullText = document.getText(range);
-      const key = currentConfig.variableNames.reduce(
-        (acc, v) => acc.replace(new RegExp(`^${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.?`), ""),
-        fullText
-      );
+      const fullText = getFullTextAtPosition(document, position);
+      if (!fullText) return;
+      const key = extractKeyFromFullText(fullText);
+      if (key === null) return;
       const keyParts = key.split(".");
       const allJson = getAllCachedJson();
       const root = vscode.workspace.workspaceFolders?.[0].uri.fsPath || "";
       const results: vscode.Location[] = [];
 
       for (const [lang, jsonData] of Object.entries(allJson)) {
-        const value = getValueByKey(jsonData, key);
-        if (value !== undefined) {
-          const filePath = currentConfig.paths.find((p) => path.basename(p, ".json") === lang);
-          if (!filePath) continue;
+        try {
+          const value = getValueByKey(jsonData, key);
+          if (value !== undefined) {
+            const filePath = currentConfig.paths.find((p) => path.basename(p, ".json") === lang);
+            if (!filePath) continue;
 
-          const fullPath = path.resolve(root, filePath);
-          const text = fs.readFileSync(fullPath, "utf8");
-          const lineIndex = text
-            .split("\n")
-            .findIndex((line) => line.includes(`"${keyParts.at(-1)}"`));
+            const fullPath = path.resolve(root, filePath);
+            try {
+              const text = fs.readFileSync(fullPath, "utf8");
+              const lineIndex = text
+                .split("\n")
+                .findIndex((line) => line.includes(`"${keyParts.at(-1)}"`));
 
-          if (lineIndex >= 0) {
-            results.push(
-              new vscode.Location(vscode.Uri.file(fullPath), new vscode.Position(lineIndex, 0))
-            );
+              if (lineIndex >= 0) {
+                results.push(
+                  new vscode.Location(vscode.Uri.file(fullPath), new vscode.Position(lineIndex, 0))
+                );
+              }
+            } catch (e) {
+              // Silently skip if file cannot be read
+              console.error(`[${packageId}] Error reading file ${fullPath}:`, e);
+            }
           }
+        } catch (e) {
+          // Silently skip errors for individual JSON files
+          console.error(`[${packageId}] Error processing ${lang} JSON in definition:`, e);
         }
       }
 
@@ -268,10 +318,13 @@ function registerDefinition(context: vscode.ExtensionContext): void {
     },
   };
 
-  const disposable = vscode.languages.registerDefinitionProvider(
-    currentConfig.workInFiles,
-    provider
-  );
+  // Đăng ký cho mọi file, sau đó tự lọc theo currentConfig.workInFiles
+  const selector: vscode.DocumentSelector = [
+    { scheme: "file" },
+    { scheme: "untitled" },
+    { scheme: "vscode-notebook-cell" },
+  ];
+  const disposable = vscode.languages.registerDefinitionProvider(selector, provider);
   context.subscriptions.push(disposable);
 }
 
@@ -283,18 +336,23 @@ function registerDefinition(context: vscode.ExtensionContext): void {
 function handleJsonCacheAndWatcher(configPaths: string[], context: vscode.ExtensionContext): void {
   const root = vscode.workspace.workspaceFolders?.[0].uri.fsPath || "";
 
+  const newFullPaths = new Set<string>();
+  const newLabels: Record<string, string> = {};
+
   for (const relativePath of configPaths) {
     const fullPath = path.resolve(root, relativePath);
     const label = path.basename(fullPath, ".json");
+    newFullPaths.add(fullPath);
+    newLabels[fullPath] = label;
 
     const loadFile = () => {
       try {
         const raw = fs.readFileSync(fullPath, "utf-8");
         jsonCache[label] = JSON.parse(raw);
       } catch (e: any) {
-        vscode.window.showWarningMessage(
-          `[${packageId}] Error reading ${relativePath}: ${e.message}`
-        );
+        // Log error to console instead of showing warning to avoid blocking
+        // This allows the extension to continue working even if some JSON files have errors
+        console.error(`[${packageId}] Error reading ${relativePath}:`, e.message);
         jsonCache[label] = {};
       }
     };
@@ -316,6 +374,21 @@ function handleJsonCacheAndWatcher(configPaths: string[], context: vscode.Extens
       jsonWatchers[fullPath] = watcher;
     }
   }
+
+  // Dọn watcher và cache cho các path không còn trong config
+  for (const [fullPath, watcher] of Object.entries(jsonWatchers)) {
+    if (!newFullPaths.has(fullPath)) {
+      watcher.dispose();
+      delete jsonWatchers[fullPath];
+      const label = jsonPathLabels[fullPath];
+      if (label) {
+        delete jsonCache[label];
+      }
+      delete jsonPathLabels[fullPath];
+    }
+  }
+
+  jsonPathLabels = newLabels;
 }
 
 /**
@@ -334,10 +407,61 @@ function getAllCachedJson(): Record<string, any> {
 function buildRegexFromVariables(vars: string[]): RegExp {
   // escape special characters in variable names
   const escaped = vars.map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`(?:${escaped.map((v) => `(this\\.${v}|${v})`).join("|")})(\\.[a-zA-Z0-9_]+)*`);
+  // Match text that starts with any variable name, optionally followed by dot-separated properties
+  // This allows matching text that looks like matchStrings, not just valid variables
+  return new RegExp(`(?:${escaped.join("|")})(\\.[a-zA-Z0-9_]+)*`);
+}
 
-  // (?:${escaped.join("|")})(\\.[a-zA-Z0-9_]+)+
-  // (?:${escaped.map(v => `(this\\.${v}|${v})`).join("|")})(\\.[a-zA-Z0-9_]+)*
+/**
+ * Lấy toàn bộ chuỗi key (bao gồm prefix matchStrings) tại vị trí con trỏ
+ * Chỉ cho phép các ký tự [a-zA-Z0-9_.] để tránh dính sang phần template/HTML khác
+ */
+function getFullTextAtPosition(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): string | null {
+  const lineText = document.lineAt(position.line).text;
+  if (!lineText) return null;
+
+  const isAllowed = (ch: string): boolean => /[a-zA-Z0-9_.]/.test(ch);
+
+  // Di chuyển sang trái
+  let start = position.character;
+  if (start > 0) start--;
+  while (start > 0 && isAllowed(lineText.charAt(start - 1))) {
+    start--;
+  }
+
+  // Di chuyển sang phải
+  let end = position.character;
+  while (end < lineText.length && isAllowed(lineText.charAt(end))) {
+    end++;
+  }
+
+  if (start === end) return null;
+  return lineText.substring(start, end);
+}
+
+/**
+ * Từ fullText (vd: `this._translate.CONTROLL.LABEL.total_payment_in_word`)
+ * cắt bỏ prefix matchStrings để lấy key (vd: `CONTROLL.LABEL.total_payment_in_word`)
+ * Nếu không khớp bất kỳ matchStrings nào thì trả về null.
+ */
+function extractKeyFromFullText(fullText: string): string | null {
+  if (!fullText) return null;
+
+  // Đảm bảo chuỗi match đúng pattern (dùng lại regex cũ để không match linh tinh)
+  const regex = buildRegexFromVariables(currentConfig.matchStrings);
+  if (!regex.test(fullText)) return null;
+
+  for (const prefix of currentConfig.matchStrings) {
+    if (fullText === prefix || fullText.startsWith(`${prefix}.`)) {
+      const raw = fullText.slice(prefix.length);
+      return raw.replace(/^\./, "");
+    }
+  }
+
+  return null;
 }
 
 /**

@@ -7,4 +7,4 @@ const version = pkg.version || '0.0.0';
 
 const outputFile = `dist/${name}-${version}.vsix`;
 
-execSync(`vsce package --out ${outputFile}`, { stdio: 'inherit' });
+execSync(`npx @vscode/vsce package --out ${outputFile}`, { stdio: 'inherit' });
