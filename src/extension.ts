@@ -143,9 +143,9 @@ function registerHover(context: vscode.ExtensionContext): void {
 
         const fullText = getFullTextAtPosition(document, position);
         if (!fullText) return;
-        const key = extractKeyFromFullText(fullText);
-        if (key === null) return;
         const allJson = getAllCachedJson();
+        const key = getBestKeyFromFullText(fullText, allJson);
+        if (key === null) return;
         let markdownText = "";
 
         for (const [lang, jsonData] of Object.entries(allJson)) {
@@ -277,10 +277,10 @@ function registerDefinition(context: vscode.ExtensionContext): void {
     provideDefinition(document, position, _token) {
       const fullText = getFullTextAtPosition(document, position);
       if (!fullText) return;
-      const key = extractKeyFromFullText(fullText);
+      const allJson = getAllCachedJson();
+      const key = getBestKeyFromFullText(fullText, allJson);
       if (key === null) return;
       const keyParts = key.split(".");
-      const allJson = getAllCachedJson();
       const root = vscode.workspace.workspaceFolders?.[0].uri.fsPath || "";
       const results: vscode.Location[] = [];
 
@@ -458,6 +458,52 @@ function extractKeyFromFullText(fullText: string): string | null {
     if (fullText === prefix || fullText.startsWith(`${prefix}.`)) {
       const raw = fullText.slice(prefix.length);
       return raw.replace(/^\./, "");
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Lấy key tốt nhất từ fullText dựa trên JSON hiện tại.
+ * - Với `_translate.CONTROLL.LABEL.x` → dùng key `CONTROLL.LABEL.x`
+ * - Với `'CONTROLL.buy_invoice' | translate` → ưu tiên `CONTROLL.buy_invoice`
+ *   (vì JSON thường có root `CONTROLL`).
+ */
+function getBestKeyFromFullText(
+  fullText: string,
+  allJson: Record<string, any>
+): string | null {
+  if (!fullText) return null;
+
+  // Bỏ quote đầu/cuối nếu có
+  const cleaned = fullText.replace(/^['"]|['"]$/g, "");
+  if (!cleaned) return null;
+
+  const candidates: string[] = [];
+
+  // Candidate 1: cắt prefix (như logic hiện tại)
+  const stripped = extractKeyFromFullText(cleaned);
+  if (stripped) {
+    candidates.push(stripped);
+  }
+
+  // Candidate 2: dùng nguyên chuỗi (phù hợp trường hợp CONTROLL là root key)
+  if (!candidates.includes(cleaned)) {
+    candidates.push(cleaned);
+  }
+
+  // Thử lần lượt trên tất cả JSON; key nào tồn tại thì chọn
+  for (const candidate of candidates) {
+    for (const jsonData of Object.values(allJson)) {
+      try {
+        const value = getValueByKey(jsonData, candidate);
+        if (value !== undefined) {
+          return candidate;
+        }
+      } catch {
+        // bỏ qua JSON lỗi, tiếp tục thử cái khác
+      }
     }
   }
 
