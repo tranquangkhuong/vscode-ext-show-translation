@@ -2,7 +2,7 @@
 
 - Extension supports displaying i18n (multilingual) content from JSON files
 
-- Variable names (e.g. `_translate`, `this._translate`) and JSON file paths can be configured via `.vscode/vscode-ext-show-translation/config.json`
+- Variable names (e.g. `this._translate`, `_translate`) and JSON file paths can be configured via `.vscode/vscode-ext-show-translation/config.json`
 
 - Read the [configuration](#🔧-configuration) section below
 
@@ -20,8 +20,8 @@ Create file: `.vscode/vscode-ext-show-translation/config.json`
 
 ```JSON
 {
-    "variableNames": ["_translate", "this._translate"],
-    "workInFiles": ["typescript", "html"],
+    "matchStrings": ["this._translate", "_translate"],
+    "workInFiles": ["javascript", "typescript", "html"],
     "paths": [
         "src/assets/i18n/vi.json",
         "src/assets/i18n/en.json"
@@ -35,7 +35,7 @@ Paths to JSON data files may vary within each project. Please fill in the exact 
 
 ## 🐞 Note
 
-- If hover/hint is not displayed: check the variable name in `config.json`
+- If hover/hint is not displayed: check the matchStrings in `show-translation.json`
 
 - If you don't jump to the file: the key certainly exists in JSON
 

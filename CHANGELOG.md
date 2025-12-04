@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.4 (2025-12-04)
+
+- Update readme, image
+
 ## 0.0.3 (2025-12-04)
 
 - Add support for javascript language
